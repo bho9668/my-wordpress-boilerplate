@@ -1,0 +1,93 @@
+version: '3'
+
+# Create two networks: one for front-end containers that we'll make
+# publicly accessible to the internet, and one for private back-end.
+networks:
+  frontend:
+  backend:
+ 
+# Create our containers.
+services:
+  
+  traefik:
+    image: traefik:latest
+    command: --api --docker --acme.email="${ACME_EMAIL}"
+    restart: always
+    networks:
+      - backend
+      - frontend
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Access to Docker
+      - ./traefik.toml:/traefik.toml              # Traefik configuration
+      - ./acme.json:/acme.json                    # SSL certificates
+    ports:
+      - "80:80"
+      - "443:443"
+    labels:
+      - "traefik.docker.network=frontend"
+      - "traefik.enable=true"
+      - "traefik.frontend.rule=Host:${TRAEFIK_DOMAINS}"
+      - "traefik.port=8080"
+      - "traefik.frontend.auth.basic=${BASIC_AUTH}" # Puts the traefik dashboard behind a HTTP Auth
+ 
+  my_application-db:
+    image: mariadb:latest
+    restart: always
+    networks:
+      - backend
+    volumes:
+      - ./database-dir:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${WORDPRESS_DB_NAME}
+      MYSQL_USER: ${WORDPRESS_DB_USER}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+    labels:
+      - "traefik.enable=false"
+ 
+  my_application-wp:
+    image: wordpress:latest
+    depends_on:
+      - my_application-db
+    restart: always
+    networks:
+      - backend
+      - frontend
+    volumes:
+      - ./wordpress-dir:/var/www/html
+      - ./php.ini:/usr/local/etc/php/php.ini
+    environment:
+      WORDPRESS_DB_HOST: my_application-db:3306
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+    labels:
+      - "traefik.docker.network=frontend"
+      - "traefik.enable=true"
+      - "traefik.frontend.rule=Host:${WORDPRESS_DOMAINS}"
+      - "traefik.port=80"
+      - "traefik.protocol=http"
+ 
+
+  my_application-phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    depends_on:
+      - my_application-db
+    restart: always
+    networks:
+      - backend
+      - frontend
+    volumes:
+      - ./php.ini:/usr/local/etc/php/php.ini
+    environment:
+      PMA_HOST: my_application-db
+      PMA_ABSOLUTE_URI: /
+      MYSQL_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD}
+    labels:
+      - "traefik.docker.network=frontend"
+      - "traefik.enable=true"
+      - "traefik.frontend.rule=Host:${PHPMYADMIN_DOMAINS}"
+      - "traefik.port=80"
+      - "traefik.protocol=http"
+      - "traefik.frontend.auth.basic=${BASIC_AUTH}" # Puts phpMyAdmin behind HTTP Auth (And you still have to login to the db)
+
